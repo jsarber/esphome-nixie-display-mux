@@ -5,7 +5,7 @@
 // #include "Z5660M_4.h"
 #include "Z573M_4.h"
 
-#define NIXIE_POWER_V3_0
+#define NIXIE_POWER_V3_2
 // #define NIXIE_POWER_V3_1
 // #define NIXIE_POWER_V3_2
 
