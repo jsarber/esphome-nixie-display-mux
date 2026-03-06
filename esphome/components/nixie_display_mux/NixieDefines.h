@@ -2,8 +2,8 @@
 #define Nixie_Defines_h
 
 // #include "IN12A_6.h"
-#include "Z5660M_4.h"
-// #include "Z573M_4.h"
+// #include "Z5660M_4.h"
+#include "Z573M_4.h"
 
 #define NIXIE_POWER_V3_0
 // #define NIXIE_POWER_V3_1
