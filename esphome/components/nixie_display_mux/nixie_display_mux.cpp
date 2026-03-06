@@ -109,7 +109,7 @@ BaseType_t NixieDisplayMux::start_multiplexing_task() {
       "nixie_mux_task",       // Task name
       2048,                   // Stack size (2KB)
       this,                   // Pass component pointer as parameter
-      tskIDLE_PRIORITY + 2,   // Priority: higher than idle, lower than WiFi
+      24,                     // Priority: highest priority
       &nixie_display_mux_task_handle  // Task handle
   );
 }
