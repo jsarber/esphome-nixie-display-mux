@@ -104,9 +104,6 @@ class NixieDisplayMux : public Component {
   uint8_t anode_2_pin_ = NIXIE_ANODE_2;
   uint8_t anode_3_pin_ = NIXIE_ANODE_3;
 
-  // Shift register type (gpio or spi)
-  bool use_spi_{false};
-
   // Your existing library instances
   NixieShiftRegister *sr_{nullptr};
   NixieDisplay *display_{nullptr};

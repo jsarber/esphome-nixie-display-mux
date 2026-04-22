@@ -38,12 +38,8 @@ TaskHandle_t nixie_display_mux_task_handle = nullptr;
 void NixieDisplayMux::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Nixie Display using original libraries...");
 
-  // Create shift register instance
-  // Check if SPI mode is enabled and create appropriate type
-
   this->sr_ = new NixieShiftRegister(4, this->sr_data_pin_, this->sr_clock_pin_, this->sr_latch_pin_);
 
-  // Create display instance
   this->display_ = new NixieDisplay(this->num_tubes_, this->anode_1_pin_, this->anode_2_pin_,
                                      this->anode_3_pin_, this->blank_pin_, this->sr_);
 
@@ -53,19 +49,12 @@ void NixieDisplayMux::setup() {
 
   this->set_all_tubes(0);
 
-  // Start the FreeRTOS task for multiplexing
-  BaseType_t create_result = NixieDisplayMux::start_multiplexing_task();
-  this->start_multiplexing_task_ = true;
+  BaseType_t create_result = this->start_multiplexing_task();
 
   if (create_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create nixie display multiplexing task!");
     this->start_multiplexing_task_ = false;
     return;
-  }
-
-  if (nixie_display_mux_task_handle == nullptr) {
-    ESP_LOGE(TAG, "Failed to create nixie display multiplexing task!");
-    this->start_multiplexing_task_ = false;
   }
 }
 

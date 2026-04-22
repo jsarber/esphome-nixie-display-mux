@@ -6,12 +6,6 @@
 #include "NixieTube.h"
 #include "NixieShiftRegister.h"
 
-// ESPHome includes for defines and helpers
-#ifdef USE_ESPHOME_FREERTOS_TASK
-#include "esphome/core/defines.h"
-#include "esphome/core/helpers.h"
-#endif
-
 class NixieDisplay {
  public:
   // Constructors for different anode configurations
@@ -71,7 +65,8 @@ class NixieDisplay {
   // Main anti-poison routine - called periodically by update()
   void antiPoison();
 
-  // Get the anti-poison digit for a specific tube (0-indexed)
+  // Get the anti-poison digit for a specific tube (0-indexed).
+  // All tubes read from the same ap_current_digit_ position; each tube uses its own ap_array.
   uint8_t getAntiPoisonDigit(uint8_t tube_index);
 
   // Enable or disable the anti-poison routine
@@ -121,7 +116,10 @@ class NixieDisplay {
   uint16_t ap_max_loops_{AP_MAX_LOOPS_DEFAULT};  // Maximum anti-poison loops before exit check
   uint8_t soft_start_progress_{0};         // Progress through soft-start sequence
   uint8_t soft_stop_progress_{0};          // Progress through soft-stop sequence
+  uint8_t ap_tube_loops_[6];               // Per-tube anti-poison cycle count for staggered exit (deprecated, kept for compatibility)
   unsigned long ap_last_check_{0};         // Last time anti-poison state was checked (millis)
+  unsigned long ap_last_tube_time_{0};      // Last time a tube was added to AP mode during soft start (millis)
+  unsigned long ap_tube_entry_time_[6];     // Entry time for each tube into AP mode (soft stop duration)
 
   // ==================== Private Methods ====================
   // Neon indicator methods (stub - to be implemented)
