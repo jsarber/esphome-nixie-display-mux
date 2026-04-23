@@ -98,15 +98,15 @@ class NixieDisplayMux : public Component {
  protected:
   bool start_multiplexing_task_{false};
 
-  // Configuration
-  uint8_t num_tubes_ = NIXIE_TUBES;
-  uint8_t sr_data_pin_ = SHIFT_REGISTER_DATA;
-  uint8_t sr_clock_pin_ = SHIFT_REGISTER_CLK;
-  uint8_t sr_latch_pin_ = SHIFT_REGISTER_LATCH;
-  uint8_t blank_pin_ = SHIFT_REGISTER_BLANK;
-  uint8_t anode_1_pin_ = NIXIE_ANODE_1;
-  uint8_t anode_2_pin_ = NIXIE_ANODE_2;
-  uint8_t anode_3_pin_ = NIXIE_ANODE_3;
+  // Configuration - defaults match power_board v30
+  uint8_t num_tubes_ = 4;
+  uint8_t sr_data_pin_ = 12;
+  uint8_t sr_clock_pin_ = 13;
+  uint8_t sr_latch_pin_ = 14;
+  uint8_t blank_pin_ = 21;
+  uint8_t anode_1_pin_ = 15;
+  uint8_t anode_2_pin_ = 16;
+  uint8_t anode_3_pin_ = 17;
 
   // Your existing library instances
   NixieShiftRegister *sr_{nullptr};

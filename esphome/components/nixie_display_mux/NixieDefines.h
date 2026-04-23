@@ -1,45 +1,27 @@
 #ifndef Nixie_Defines_h
 #define Nixie_Defines_h
 
-// #include "IN12A_6.h"
+#include "esphome/core/defines.h"
+
+// Tube type header selection (controlled by tube_type preset in YAML)
+#if defined TUBE_Z5660M
 #include "Z5660M_4.h"
-// #include "Z573M_4.h"
-
-#define NIXIE_POWER_V3_0
-// #define NIXIE_POWER_V3_1
-// #define NIXIE_POWER_V3_2
-
-#ifdef NIXIE_POWER_V3_1
-#define SHIFT_REGISTER_DATA 27
-#define SHIFT_REGISTER_CLK 26
-#define SHIFT_REGISTER_LATCH 22
-#elif defined NIXIE_POWER_V3_2
-#define SHIFT_REGISTER_DATA 27
-#define SHIFT_REGISTER_CLK 26
-#define SHIFT_REGISTER_LATCH 4
+#define PIN_MAP PIN_MAP_Z5660M
+#elif defined TUBE_IN12A_6
+#include "IN12A_6.h"
+#define PIN_MAP PIN_MAP_IN12A
 #else
-#define SHIFT_REGISTER_DATA 12
-#define SHIFT_REGISTER_CLK 13
-#define SHIFT_REGISTER_LATCH 14
-#endif
-
-#ifdef NIXIE_POWER_V3_2
-#define SHIFT_REGISTER_BLANK 2
-#else
-#define SHIFT_REGISTER_BLANK 21
+#include "Z573M_4.h"
+#define PIN_MAP PIN_MAP_Z573M
 #endif
 
 #define SHIFT_REGISTER_COUNT 4
 
-#if defined NIXIE_POWER_V3_1 || defined NIXIE_POWER_V3_2
-#define NIXIE_ANODE_1 5
-#else
-#define NIXIE_ANODE_1 15
-#endif
+// SR_OFFSET - cathode bit position offset (default v30; overridden by power_board preset)
+#define SR_OFFSET 15
+
 #define NIXIE_ANODE_2 16
 #define NIXIE_ANODE_3 17
-#define NIXIE_DIRECT_ANODE
-#define NIXIE_DIRECT_CATHODE
 
 // Multiplexing frequency (50Hz for 20ms period)
 #define MULTIPLEXING_FREQUENCY_HZ 50
@@ -54,12 +36,6 @@
 
 #define LED_DATA_PIN 25
 #define BUTTONS A5
-
-#if defined NIXIE_POWER_V3_1 || defined NIXIE_POWER_V3_2
-#define SR_OFFSET 16
-#else
-#define SR_OFFSET 15
-#endif
 
 #endif
 
