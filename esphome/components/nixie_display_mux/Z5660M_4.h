@@ -7,8 +7,6 @@
 
 #define LED_COUNT 4
 #define NIXIE_TUBES 4
-#define NIXIE_NEON_ENABLE true
-
 // Cathode pin mapping per tube (only included once)
 const uint8_t PIN_MAP_Z5660M[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8};
 
