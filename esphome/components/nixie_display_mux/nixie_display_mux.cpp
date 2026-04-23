@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/defines.h"
+#include "driver/ledc.h"
 
 namespace esphome {
 namespace nixie_display_mux {
@@ -46,6 +47,36 @@ void NixieDisplayMux::setup() {
   ESP_LOGCONFIG(TAG, "  Number of tubes: %d", this->num_tubes_);
   ESP_LOGCONFIG(TAG, "  Using NixieDisplay and NixieShiftRegister libraries");
   ESP_LOGCONFIG(TAG, "  Multiplexing frequency: %d Hz (2ms period)", MULTIPLEXING_FREQUENCY_HZ);
+
+  // Neon indicators with PWM dimming (always on) via LEDC
+#ifdef NEONS_ENABLED
+  // ESP-IDF LEDC API: channel 0, 5000Hz, 8-bit resolution, high-speed mode
+  ledc_timer_config_t timer_conf = {};
+  timer_conf.speed_mode     = LEDC_HIGH_SPEED_MODE;
+  timer_conf.duty_resolution = LEDC_TIMER_8_BIT;
+  timer_conf.timer_num      = LEDC_TIMER_0;
+  timer_conf.freq_hz        = 5000;
+  timer_conf.clk_cfg        = LEDC_AUTO_CLK;
+  ESP_ERROR_CHECK(ledc_timer_config(&timer_conf));
+
+  ledc_channel_config_t ch_conf = {};
+  ch_conf.gpio_num       = NEON_1;
+  ch_conf.speed_mode     = LEDC_HIGH_SPEED_MODE;
+  ch_conf.channel        = LEDC_CHANNEL_0;
+  ch_conf.intr_type      = LEDC_INTR_DISABLE;
+  ch_conf.timer_sel      = LEDC_TIMER_0;
+  ch_conf.duty           = 100;
+  ch_conf.hpoint         = 0;
+  ch_conf.sleep_mode      = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD;
+  ESP_ERROR_CHECK(ledc_channel_config(&ch_conf));
+
+  // Attach NEON_2 to the same channel (same PWM signal)
+  ledc_set_pin(NEON_2, LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
+
+  this->display_->neons_on_ = true;
+#else
+  this->display_->neons_on_ = false;
+#endif
 
   this->set_all_tubes(0);
 
@@ -181,6 +212,13 @@ bool NixieDisplayMux::is_anti_poison_active() {
     return this->display_->isAntiPoisonActive();
   }
   return false;
+}
+
+// Enable or disable neon indicator lights
+void NixieDisplayMux::neons_on(bool enable) {
+  if (this->display_) {
+    this->display_->neonsOff(enable);
+  }
 }
 
 }  // namespace nixie_display_mux

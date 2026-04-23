@@ -80,6 +80,10 @@ class NixieDisplayMux : public Component {
   // Check if anti-poison routine is currently active
   bool is_anti_poison_active();
 
+  // ==================== Neon Indicator Control ====================
+  // Enable or disable neon indicator lights
+  void neons_on(bool enable);
+
   // ==================== Task Control ====================
   // Start the FreeRTOS multiplexing task
   // Returns pdPASS on success, pdFAIL on failure

@@ -2,6 +2,7 @@
 
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
+#include "driver/ledc.h"
 
 // Constructor: 2-anode configuration with shift register (optional)
 // Used for multiplexed nixie tube displays where anodes are shared between tubes
@@ -146,7 +147,8 @@ void NixieDisplay::update() {
       this->sr_->update();
     }
   }
-}
+
+ }
 
 // Turn on the nixie display
 // Sets state to BLANK (2) and triggers initial update
@@ -168,15 +170,21 @@ void NixieDisplay::off() {
   this->sr_->update();
 }
 
-// Toggle neon indicator lights based on multiplexer selection
-// n_mux determines which group of neons is controlled:
-//   - Each multiplexer group controls a subset of neon indicators
-//   - Alternates between on/off states for visual effect
-// This is a stub implementation pending full neon indicator feature
+// Neon indicator lights (always on, no toggling)
+// Both NEON_1 and NEON_2 are tied to the same LEDC channel
 void NixieDisplay::toggleNeons(uint8_t n_mux) {
-  // Stub implementation - to be completed when neon indicators are added
-  // n_mux determines which neon group to toggle
-  // Neon groups provide visual status feedback for the display
+  // No-op: neons are PWM'd continuously via LEDC in setup()
+  // n_mux parameter kept for API compatibility
+}
+
+// Update neon indicator lights - alternates between NEON_1 and NEON_2
+void NixieDisplay::updateNeons() {
+  if (neon_mux_ < 2) {
+    neon_mux_++;
+  } else {
+    neon_mux_ = 1;
+  }
+  toggleNeons(neon_mux_);
 }
 
 // Toggle anode pins based on mux selection
@@ -307,17 +315,6 @@ uint16_t NixieDisplay::updateNixies() {
   }
 }
 
-// Update neon indicator lights
-// Runs periodically to toggle neon states based on timing
-// Manages neon blink, fade, and multiplexing effects
-// This is a stub implementation pending full neon indicator feature
-void NixieDisplay::updateNeons() {
-  // Stub implementation - to be completed when neon indicators are added
-  // Handles:
-  // - Blinking states based on neon_blink_ flag
-  // - Fading effects controlled by fade_state_ and fade_timer_
-  // - Multiplexing between neon groups via neon_mux_
-}
 
 // ==================== Anti-Poison Routine Implementation ====================
 // Anti-poison (anti-fatigue) routine cycles through all digit positions to prevent
@@ -421,13 +418,13 @@ void NixieDisplay::antiPoison() {
   }
 
   // When soft start is disabled, immediately set all tubes to ANTI_POISON mode
-  if (!ap_soft_start_) {
+  if (!ap_soft_start_ && ap_loop_ == 0) {
     unsigned long current_time = millis();
     for (uint8_t t = 0; t < numTubes_; t++) {
       ap_state_[t] = 1;
       ap_tube_entry_time_[t] = current_time;
     }
-    ap_loop_ = numTubes_;  // Skip past soft start count into cycling phase
+    ap_loop_ = numTubes_;  // Mark as started
   }
 
   // Staggered soft stop - each tube runs anti-poison for 30 seconds after entering, then exits
@@ -478,4 +475,14 @@ void NixieDisplay::setAntiPoisonEnabled(bool enabled) {
 // Returns true if anti-poison is enabled, false otherwise
 bool NixieDisplay::isAntiPoisonActive() {
   return this->anti_poison_enabled_;
+}
+
+// Enable or disable neon indicator lights
+// Controls LEDC duty cycle to turn neons on/off
+void NixieDisplay::neonsOff(bool t_enable) {
+  this->neons_on_ = t_enable;
+#ifdef NEONS_ENABLED
+  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, t_enable ? 100 : 0);
+  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
+#endif
 }
