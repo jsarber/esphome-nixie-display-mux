@@ -80,6 +80,10 @@ class NixieDisplayMux : public Component {
   // Check if anti-poison routine is currently active
   bool is_anti_poison_active();
 
+  // ==================== Neon Indicator Control ====================
+  // Enable or disable neon indicator lights
+  void neons_on(bool enable);
+
   // ==================== Task Control ====================
   // Start the FreeRTOS multiplexing task
   // Returns pdPASS on success, pdFAIL on failure
@@ -103,9 +107,6 @@ class NixieDisplayMux : public Component {
   uint8_t anode_1_pin_ = NIXIE_ANODE_1;
   uint8_t anode_2_pin_ = NIXIE_ANODE_2;
   uint8_t anode_3_pin_ = NIXIE_ANODE_3;
-
-  // Shift register type (gpio or spi)
-  bool use_spi_{false};
 
   // Your existing library instances
   NixieShiftRegister *sr_{nullptr};

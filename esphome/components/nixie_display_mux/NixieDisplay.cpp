@@ -1,15 +1,17 @@
 #include "NixieDisplay.h"
 
-#ifdef USE_ESPHOME_FREERTOS_TASK
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
-#endif
+#include "driver/ledc.h"
 
 // Constructor: 2-anode configuration with shift register (optional)
 // Used for multiplexed nixie tube displays where anodes are shared between tubes
 // Tube mapping for 2-anode configuration: Anode 1 controls tubes 1&3, Anode 2 controls tubes 2&4
 NixieDisplay::NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2)
     : numTubes_(t_numTubes), anode_1_(t_anode_1), anode_2_(t_anode_2) {
+  pinMode(this->anode_1_, OUTPUT);
+  pinMode(this->anode_2_, OUTPUT);
+
   for (uint8_t i = 0; i < this->numTubes_; i++) {
     tubeArray[i] = {(uint8_t)(i + 1), (uint8_t)(i + 1), false};
   }
@@ -111,10 +113,10 @@ NixieDisplay::~NixieDisplay() {
 // Set the digit value displayed on a specific tube
 // t_tube is 1-indexed (tubes are numbered 1-6)
 // t_digit is the value to display (0-9, with special characters possible depending on tube type)
-// When anti-poison is enabled, this function is bypassed to prevent overwriting anti-poison digits
+// Anti-poison digits are written via loop() in nixie_display_mux.cpp
 void NixieDisplay::set(uint8_t t_tube, uint8_t t_digit) {
-  // Don't update display while anti-poison is active to prevent overwriting anti-poison digits
-  tubeArray[t_tube - 1].set_value(t_digit);
+  if (t_tube < 1 || t_tube > 6) return;
+  this->tubeArray[t_tube - 1].set_value(t_digit);
 }
 
 // Get the current digit value displayed on a specific tube
@@ -141,39 +143,48 @@ void NixieDisplay::update() {
 
     // Only update shift register during the BLANK period (state 2)
     // This prevents ghosting and reduces CPU load
-    if (this->nixie_state_ == 2) {
-      sr_->update();
+    if (this->nixie_state_ == 2 && this->sr_) {
+      this->sr_->update();
     }
   }
-}
+
+ }
 
 // Turn on the nixie display
 // Sets state to BLANK (2) and triggers initial update
 // Enables shift register output (sr_blank HIGH) for display updates
 void NixieDisplay::on() {
+  if (!this->sr_) return;
   this->nixie_state_ = 2;
   NixieDisplay::updateNixies();
-  sr_->update();
+  this->sr_->update();
 }
 
 // Turn off the nixie display
 // Sets state to OFF (0) and triggers update to blank all tubes
 // Disables shift register output (sr_blank LOW)
 void NixieDisplay::off() {
+  if (!this->sr_) return;
   this->nixie_state_ = 0;
   NixieDisplay::updateNixies();
-  sr_->update();
+  this->sr_->update();
 }
 
-// Toggle neon indicator lights based on multiplexer selection
-// n_mux determines which group of neons is controlled:
-//   - Each multiplexer group controls a subset of neon indicators
-//   - Alternates between on/off states for visual effect
-// This is a stub implementation pending full neon indicator feature
+// Neon indicator lights (always on, no toggling)
+// Both NEON_1 and NEON_2 are tied to the same LEDC channel
 void NixieDisplay::toggleNeons(uint8_t n_mux) {
-  // Stub implementation - to be completed when neon indicators are added
-  // n_mux determines which neon group to toggle
-  // Neon groups provide visual status feedback for the display
+  // No-op: neons are PWM'd continuously via LEDC in setup()
+  // n_mux parameter kept for API compatibility
+}
+
+// Update neon indicator lights - alternates between NEON_1 and NEON_2
+void NixieDisplay::updateNeons() {
+  if (neon_mux_ < 2) {
+    neon_mux_++;
+  } else {
+    neon_mux_ = 1;
+  }
+  toggleNeons(neon_mux_);
 }
 
 // Toggle anode pins based on mux selection
@@ -207,15 +218,21 @@ void NixieDisplay::toggleAnode(uint8_t tmux) {
 // Iterates through all shift register bits and sets the cathode pin
 // for the specified tube while clearing all other cathodes
 void NixieDisplay::toggleCathode(uint8_t tmux) {
+  // tmux is the multiplexer index (1 or 2):
+  //   tmux=1 -> anode 1 active -> tubes 1&3 light up simultaneously
+  //   tmux=2 -> anode 2 active -> tubes 2&4 light up simultaneously
+  // Cathodes 1&2 share bit positions (lower branch), cathodes 3&4 share positions (upper branch + SR_OFFSET)
+  uint8_t digit_lower = get(tmux);       // digit for tube tmux (cathodes 1 or 2)
+  uint8_t digit_upper = get(tmux + 2);   // digit for tube tmux+2 (cathodes 3 or 4)
   for (int i = 0; i < SHIFT_REGISTER_COUNT * 8; i++) {
     if(i >= SR_OFFSET) {
-      if((i == PIN_MAP[get(tmux+(this->numTubes_ / 2))] + SR_OFFSET)) {
+      if((i == PIN_MAP[digit_upper] + SR_OFFSET)) {
         sr_->set(i, 1);
       } else {
         sr_->set(i, 0);
       }
     } else if(i < SR_OFFSET) {
-      if(i == PIN_MAP[get(tmux)]) {
+      if(i == PIN_MAP[digit_lower]) {
         sr_->set(i, 1);
       } else {
         sr_->set(i, 0);
@@ -233,6 +250,29 @@ void NixieDisplay::toggleCathode(uint8_t tmux) {
 // The t_mux_ variable tracks which tube is being displayed and alternates
 // between anodes based on the 2-anode multiplexing scheme.
 uint16_t NixieDisplay::updateNixies() {
+  // If no shift register is configured, only toggle anodes (no cathode control)
+  if (!this->sr_) {
+    switch (this->nixie_state_) {
+      case 0:
+        toggleAnode(0);
+        return NIXIE_BLANK_DELAY;
+      case 1:
+        this->nixie_state_ = 2;
+        toggleAnode(t_mux_);
+        if (t_mux_ < (this->numTubes_ / 2)) {
+          t_mux_++;
+        } else {
+          t_mux_ = 1;
+        }
+        return NIXIE_ON_DELAY;
+      case 2:
+        this->nixie_state_ = 1;
+        toggleAnode(0);
+        return NIXIE_BLANK_DELAY;
+      default:
+        return NIXIE_BLANK_DELAY;
+    }
+  }
   // Nixie Multiplexing function for 2-anode 4-tube configuration:
   // - Anode 1 (pin 5): Controls tubes 1 and 3
   // - Anode 2 (pin 16): Controls tubes 2 and 4
@@ -275,17 +315,6 @@ uint16_t NixieDisplay::updateNixies() {
   }
 }
 
-// Update neon indicator lights
-// Runs periodically to toggle neon states based on timing
-// Manages neon blink, fade, and multiplexing effects
-// This is a stub implementation pending full neon indicator feature
-void NixieDisplay::updateNeons() {
-  // Stub implementation - to be completed when neon indicators are added
-  // Handles:
-  // - Blinking states based on neon_blink_ flag
-  // - Fading effects controlled by fade_state_ and fade_timer_
-  // - Multiplexing between neon groups via neon_mux_
-}
 
 // ==================== Anti-Poison Routine Implementation ====================
 // Anti-poison (anti-fatigue) routine cycles through all digit positions to prevent
@@ -293,7 +322,7 @@ void NixieDisplay::updateNeons() {
 
 // Start the anti-poison routine
 // Parameters:
-//   randomize - whether to randomize the digit sequence (currently uses sequential order)
+//   randomize - whether to randomize the digit sequence (true = random digits, false = sequential 0-9)
 //   soft_start - whether to gradually transition tubes to anti-poison mode
 // After initialization, the routine cycles through digits for each tube and automatically
 // stops when the displayed digit matches the anti-poison digit (within tolerance).
@@ -303,16 +332,43 @@ void NixieDisplay::startAntiPoison(bool randomize, bool soft_start) {
   this->ap_soft_start_ = soft_start;
 
   // Generate anti-poison arrays (digits 0-9 for each tube)
-  // Sequential order: 0,1,2,3,4,5,6,7,8,9
-  for (uint8_t t = 0; t < this->numTubes_; t++) {
-    for (uint8_t d = 0; d < 10; d++) {
-      this->ap_array[t][d] = d;
+  if (this->ap_random_) {
+    // Generate random permutation for each tube using Fisher-Yates shuffle
+    for (uint8_t t = 0; t < this->numTubes_; t++) {
+      // Create array of digits 0-9
+      uint8_t digits[10];
+      for (uint8_t d = 0; d < 10; d++) {
+        digits[d] = d;
+      }
+
+      // Fisher-Yates shuffle to randomize the order
+      for (int i = 9; i > 0; i--) {
+        uint8_t j = random(i + 1);  // random number from 0 to i
+        uint8_t temp = digits[i];
+        digits[i] = digits[j];
+        digits[j] = temp;
+      }
+
+      // Store the shuffled digits in the anti-poison array
+      for (uint8_t d = 0; d < 10; d++) {
+        this->ap_array[t][d] = digits[d];
+      }
     }
+    ESP_LOGI("nixie_display", "Anti-poison routine started with randomized digits");
+  } else {
+    // Sequential order: 0,1,2,3,4,5,6,7,8,9
+    for (uint8_t t = 0; t < this->numTubes_; t++) {
+      for (uint8_t d = 0; d < 10; d++) {
+        this->ap_array[t][d] = d;
+      }
+    }
+    ESP_LOGI("nixie_display", "Anti-poison routine started with sequential digits");
   }
 
   // Initialize AP state to TIME for all tubes (0 = showing time digit)
   for (uint8_t t = 0; t < this->numTubes_; t++) {
     this->ap_state_[t] = 0;  // TIME mode
+    this->ap_tube_loops_[t] = 0;  // Reset per-tube cycle count
   }
 
   // Reset counters
@@ -320,18 +376,19 @@ void NixieDisplay::startAntiPoison(bool randomize, bool soft_start) {
   this->ap_loop_ = 0;
   this->soft_start_progress_ = 0;
   this->soft_stop_progress_ = 0;
+  for (uint8_t t = 0; t < this->numTubes_; t++) {
+    this->ap_tube_loops_[t] = 0;
+    this->ap_tube_entry_time_[t] = 0;
+  }
 
   // Initialize timing check to allow immediate execution
   this->ap_last_check_ = 0;
-
-  ESP_LOGI("nixie_display", "Anti-poison routine started (random=%d, soft_start=%d)",
-           randomize, soft_start);
+  this->ap_last_tube_time_ = 0;
 }
 
 // Main anti-poison routine - called periodically by update()
 // Runs every 100ms to cycle through digit positions
-// During soft start: transitions tubes one by one to anti-poison mode
-// When all tubes match their displayed digit: exits anti-poison mode automatically
+// Phases: soft start → cycling → staggered exit
 void NixieDisplay::antiPoison() {
   unsigned long current_time = millis();
 
@@ -343,61 +400,53 @@ void NixieDisplay::antiPoison() {
   if (!anti_poison_enabled_)
     return;
 
-  uint8_t new_ap_digit = (ap_current_digit_ + 1) % 10;
+  // Advance digit counter: 0→1→2→...→9→0 (cycles every 1 second)
+  ap_current_digit_ = (ap_current_digit_ + 1) % 10;
 
-  // Soft start: enable tubes one by one
+  // Phase 1: Soft start - transition tubes one by one to AP mode
   if (ap_soft_start_ && ap_loop_ < numTubes_) {
-    if (ap_state_[ap_loop_] == 0) {
-      ap_state_[ap_loop_] = 1;
-    }
-
-    ap_loop_++;  // <-- missing increment
-  }
-
-  // Normal anti-poison cycling
-  else if (ap_loop_ < ap_max_loops_) {
-    ap_current_digit_ = new_ap_digit;
-    ap_loop_++;
-  }
-
-  else {
-    uint8_t tubes_still_in_ap = 0;
-
-    for (uint8_t t = 0; t < numTubes_; t++) {
-      if (ap_state_[t] == 1) {
-        tubes_still_in_ap++;
-
-        uint8_t ap_digit = ap_array[t][ap_current_digit_];
-        uint8_t time_digit = tubeArray[t].get_value();
-
-        int diff = abs((int)ap_digit - (int)time_digit);
-
-        if (diff <= AP_MATCH_TOLERANCE) {
-          ap_state_[t] = 0;
-        }
+    unsigned long current_time = millis();
+    if (current_time - ap_last_tube_time_ >= 500) {
+      if (ap_state_[ap_loop_] == 0) {
+        ap_state_[ap_loop_] = 1;  // Switch this tube to ANTI_POISON mode
+        ap_tube_entry_time_[ap_loop_] = current_time;  // Record when this tube entered AP mode
       }
-    }
-
-    if (tubes_still_in_ap == 0) {
-      anti_poison_enabled_ = false;
-      for (uint8_t t = 0; t < numTubes_; t++)
-        ap_state_[t] = 0;
-      return;
-    }
-
-    if (ap_loop_ >= ap_max_loops_) {
-      setAntiPoisonEnabled(false);
-      ap_loop_ = 0;
-    } else {
       ap_loop_++;
+      ap_last_tube_time_ = current_time;
     }
+    return;
+  }
 
-    ap_current_digit_ = new_ap_digit;
+  // When soft start is disabled, immediately set all tubes to ANTI_POISON mode
+  if (!ap_soft_start_ && ap_loop_ == 0) {
+    unsigned long current_time = millis();
+    for (uint8_t t = 0; t < numTubes_; t++) {
+      ap_state_[t] = 1;
+      ap_tube_entry_time_[t] = current_time;
+    }
+    ap_loop_ = numTubes_;  // Mark as started
+  }
+
+  // Staggered soft stop - each tube runs anti-poison for 30 seconds after entering, then exits
+  uint8_t tubes_still_in_ap = 0;
+  for (uint8_t t = 0; t < numTubes_; t++) {
+    if (ap_state_[t] == 1) {
+      if (current_time - ap_tube_entry_time_[t] >= 30000UL) {
+        ap_state_[t] = 0;  // Back to TIME mode
+      }
+      tubes_still_in_ap++;
+    }
+  }
+
+  if (tubes_still_in_ap == 0) {
+    anti_poison_enabled_ = false;
   }
 }
 
 // Get the anti-poison digit for a specific tube
 // tube_index is 0-indexed (0 to numTubes_-1)
+// All tubes read from the same ap_current_digit_ position so they show the same digit
+// Each tube uses its own ap_array[tube] so the displayed anti-poison digit may differ
 // Returns the digit that should be displayed according to anti-poison state:
 //   - If tube is in TIME mode: returns the actual time digit
 //   - If tube is in ANTI_POISON mode: returns the anti-poison digit
@@ -426,4 +475,14 @@ void NixieDisplay::setAntiPoisonEnabled(bool enabled) {
 // Returns true if anti-poison is enabled, false otherwise
 bool NixieDisplay::isAntiPoisonActive() {
   return this->anti_poison_enabled_;
+}
+
+// Enable or disable neon indicator lights
+// Controls LEDC duty cycle to turn neons on/off
+void NixieDisplay::neonsOff(bool t_enable) {
+  this->neons_on_ = t_enable;
+#ifdef NEONS_ENABLED
+  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, t_enable ? 100 : 0);
+  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
+#endif
 }
