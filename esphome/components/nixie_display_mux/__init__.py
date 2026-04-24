@@ -176,10 +176,13 @@ async def to_code(config):
     if tube_define_name:
         cg.add_define(tube_define_name)
 
+    # Generate compile-time define for power board version (controls SR_OFFSET)
+    power_board_define = f"POWER_BOARD_{config[CONF_POWER_BOARD].upper()}"
+    cg.add_define(power_board_define)
+
     # Generate compile-time defines for timing and neon (override tube header values)
     cg.add_define("NIXIE_BLANK_DELAY", tube["blank_delay"])
     cg.add_define("NIXIE_ON_DELAY", tube["on_delay"])
-    cg.add_define("SR_OFFSET", pb["sr_offset"])
     if tube["neon_enabled"]:
         cg.add_define("NEONS_ENABLED")
 

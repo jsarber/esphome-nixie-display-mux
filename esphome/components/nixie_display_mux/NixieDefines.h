@@ -17,8 +17,14 @@
 
 #define SHIFT_REGISTER_COUNT 4
 
-// SR_OFFSET - cathode bit position offset (default v30; overridden by power_board preset)
+// SR_OFFSET - cathode bit position offset (controlled by power_board preset)
+#ifdef POWER_BOARD_V32
+#define SR_OFFSET 16
+#elif defined POWER_BOARD_V31
+#define SR_OFFSET 16
+#else
 #define SR_OFFSET 15
+#endif
 
 #define NIXIE_ANODE_2 16
 #define NIXIE_ANODE_3 17
