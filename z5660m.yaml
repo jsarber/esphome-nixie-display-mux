@@ -1,0 +1,464 @@
+esphome:
+  name: esp32-nixie-z5660m-4
+  friendly_name: esp32-nixie-z5660m-4
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: INFO
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "9DYKHC5PftBXwV3axlIaKyysdoaaImRpq/C0ysPF2ks="
+
+ota:
+  - platform: esphome
+    password: "b77a6cfda36f0ad2217e54ec41e1c2e8"
+    on_begin:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->display_off();
+          ESP_LOGI("nixie_clock", "Display turned off");
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esp32-Nixie-In12A-6"
+    password: "zIdoQML0Xl50"
+
+captive_portal:
+
+# Web server for debugging
+web_server:
+  port: 80
+  version: 2
+  local: true
+
+external_components:
+  - source: github://jsarber/esphome-nixie-display-mux@tube-type-power-board-config
+    components: [ nixie_display_mux ]
+    refresh: 1800s
+
+
+# Time (ESP32 gets time directly from NTP)
+time:
+  - platform: sntp
+    id: esp_time
+    timezone: America/Los_Angeles
+    on_time_sync:
+      - logger.log: "Time synchronized via NTP"
+    on_time:
+      - seconds: 15
+        minutes: 14,29,44,59
+        then:
+          - button.press: start_anti_poison
+          - logger.log: "Anti-poison routine triggered"
+
+# Nixie Display (Z5660M 4-tube multiplexed display, V3.0 power board)
+nixie_display_mux:
+  id: nixie_clock
+  tube_type: z5660m
+  power_board: v30
+
+# Time display automation
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          auto time = id(esp_time).now();
+          auto *display = id(nixie_clock);
+
+          if (!time.is_valid()) {
+            display->set_all_tubes(0);
+            return;
+          }
+
+          uint8_t digits[4];
+
+          // Show countdown timer if active, otherwise show time
+          if (id(timer_active) && id(timer_remaining) > 0) {
+            uint32_t remaining = id(timer_remaining);
+            uint8_t hrs = (remaining / 3600) % 100;
+            uint8_t mins = (remaining / 60) % 60;
+            uint8_t secs = remaining % 60;
+            if (hrs > 0) {
+              // H:MM format (e.g., "1:30" → 1,3,0,0)
+              digits[0] = hrs / 10;
+              digits[1] = hrs % 10;
+              digits[2] = mins / 10;
+              digits[3] = mins % 10;
+            } else {
+              // MM:SS format (e.g., "5:00" → 0,5,0,0)
+              digits[0] = mins / 10;
+              digits[1] = mins % 10;
+              digits[2] = secs / 10;
+              digits[3] = secs % 10;
+            }
+            ESP_LOGD("timer", "Displaying countdown: %d%d:%d%d", digits[0], digits[1], digits[2], digits[3]);
+          } else {
+            id(timer_active) = false;
+            // Get hour (12 or 24 hour format)
+            int hour = time.hour;
+            if (id(hour_format_12h).state) {
+              if (hour > 12) hour -= 12;
+              if (hour == 0) hour = 12;
+            }
+
+            // Extract digits: HH:MM format on 4 tubes
+            digits[0] = hour / 10;
+            digits[1] = hour % 10;
+            digits[2] = time.minute / 10;
+            digits[3] = time.minute % 10;
+          }
+
+          // Set the digits
+          display->set_digits(digits, 4);
+
+  # Countdown timer tick (1 second)
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(timer_active) && id(timer_remaining) > 0) {
+            id(timer_remaining)--;
+            if (id(timer_remaining) == 0) {
+              id(timer_active) = false;
+              ESP_LOGI("timer", "Countdown finished!");
+            }
+          }
+
+# FastLED light for RGB LEDs (WS2811)
+light:
+  - platform: fastled_clockless
+    id: nixie_leds
+    name: "Nixie LEDs"
+    chipset: WS2811
+    pin: GPIO25
+    num_leds: 4
+    rgb_order: GRB
+    restore_mode: RESTORE_DEFAULT_OFF
+    default_transition_length: 0s
+    effects:
+      # Effect 2: Rainbow
+      - addressable_rainbow:
+          name: "Rainbow"
+          speed: 10
+          width: 50
+
+      # Effect 3: Twinkle
+      - addressable_twinkle:
+          name: "Twinkle"
+          twinkle_probability: 5%
+          progress_interval: 20ms
+
+      # Effect 4: Running Lights (sine wave)
+      - addressable_lambda:
+          name: "Running Lights"
+          update_interval: 70ms
+          lambda: |-
+            static int position = 0;
+            auto color = id(led_effect_color);
+
+            for (int i = 0; i < it.size(); i++) {
+              float level = (sin(i + position * 0.1) * 127 + 128) / 255.0;
+              it[i] = esphome::Color(color.r * level, color.g * level, color.b * level);
+            }
+            position++;
+
+      # Effect 5: Cylon Bounce
+      - addressable_scan:
+          name: "Cylon Bounce"
+          move_interval: 100ms
+          scan_width: 1
+
+      # Effect 6: Meteor Rain
+      - addressable_lambda:
+          name: "Meteor Rain"
+          update_interval: 50ms
+          lambda: |-
+            static int pos = 0;
+            const int trail_decay = 100;
+            auto color = id(led_effect_color);
+
+            // Fade all LEDs
+            for (int i = 0; i < it.size(); i++) {
+              auto current = it[i].get();
+              it[i] = esphome::Color(
+                std::max(0, (int)current.r - trail_decay),
+                std::max(0, (int)current.g - trail_decay),
+                std::max(0, (int)current.b - trail_decay)
+              );
+            }
+
+            // Draw meteor head
+            if (pos < it.size()) {
+              it[pos] = esphome::Color(color.r, color.g, color.b);
+            }
+
+            pos++;
+            if (pos >= it.size() * 2) pos = 0;
+
+      # Effect 7: Festive (red/green alternating)
+      - addressable_lambda:
+          name: "Festive"
+          update_interval: 250ms
+          lambda: |-
+            static bool toggle = false;
+            for (int i = 0; i < it.size(); i++) {
+              if ((i % 2 == 0) == toggle) {
+                it[i] = esphome::Color(255, 0, 0);  // Red
+              } else {
+                it[i] = esphome::Color(0, 255, 0);  // Green
+              }
+            }
+            toggle = !toggle;
+
+# Globals for state management
+globals:
+  - id: led_effect_color
+    type: esphome::Color
+    restore_value: yes
+    initial_value: "esphome::Color(255, 50, 0)" # Orange default
+  - id: timer_remaining
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: timer_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# Countdown timer - set minutes from Home Assistant
+number:
+  - platform: template
+    id: timer_set_minutes
+    name: "Countdown Timer"
+    icon: "mdi:timer-outline"
+    entity_category: config
+    min_value: 1
+    max_value: 1440
+    step: 1
+    optimistic: true
+    restore_value: false
+    mode: slider
+    set_action:
+      - lambda: |-
+          id(timer_remaining) = static_cast<uint32_t>(x) * 60;
+          id(timer_active) = true;
+          ESP_LOGI("timer", "Countdown started: %lu seconds", id(timer_remaining));
+
+# Switches
+switch:
+  # Restart switch
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+
+  # 12/24 hour format toggle
+  - platform: template
+    id: hour_format_12h
+    name: "12-Hour Format"
+    icon: "mdi:clock-time-twelve"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    entity_category: config
+
+  # Anti-poison enable (runs automatically every hour)
+  - platform: template
+    id: anti_poison_enable
+    name: "Anti-Poison Enable"
+    icon: "mdi:shield-refresh"
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    entity_category: config
+
+  # Anti-poison soft start (gradually enables tubes)
+  - platform: template
+    id: anti_poison_soft_start
+    name: "Anti-Poison Soft Start"
+    icon: "mdi:speedometer-slow"
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    entity_category: config
+
+  # Anti-poison randomization
+  - platform: template
+    id: anti_poison_random
+    name: "Anti-Poison Random"
+    icon: "mdi:shuffle-variant"
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    entity_category: config
+
+  # Display off switch
+  - platform: template
+    id: display_on
+    name: "Display On"
+    icon: "mdi:eye-off"
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    entity_category: config
+    on_turn_off:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->display_off();
+          ESP_LOGI("nixie_clock", "Display turned off");
+    on_turn_on:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->display_on();
+          ESP_LOGI("nixie_clock", "Display turned on");
+
+  # Neon indicators toggle
+  - platform: template
+    id: neon_toggle
+    name: "Neon Indicators"
+    icon: "mdi:lightbulb-outline"
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    entity_category: config
+    on_turn_off:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->neons_on(false);
+    on_turn_on:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->neons_on(true);
+
+# Buttons
+button:
+  # Safe mode boot
+  - platform: safe_mode
+    name: "Safe Mode Boot"
+    entity_category: diagnostic
+
+  # Manual anti-poison trigger
+  - platform: template
+    id: start_anti_poison
+    name: "Start Anti-Poison"
+    icon: "mdi:play-circle"
+    entity_category: diagnostic 
+    on_press:
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          display->start_anti_poison(
+            id(anti_poison_random).state,
+            id(anti_poison_soft_start).state
+          );
+      - logger.log: "Anti-poison routine started"
+
+  # Test all digits (0-9 sequence)
+  - platform: template
+    name: "Test All Digits"
+    icon: "mdi:counter"
+    entity_category: diagnostic 
+    on_press:
+      - logger.log: "Starting digit test sequence"
+      - lambda: |-
+          auto *display = id(nixie_clock);
+          for (int i = 0; i <= 9; i++) {
+            display->set_all_tubes(i);
+            delay(500);
+          }
+      - logger.log: "Digit test complete"
+
+# Select for LED effect colors
+select:
+  - platform: template
+    name: "LED Effect Color"
+    id: led_color_select
+    icon: "mdi:palette"
+    optimistic: true
+    restore_value: true
+    initial_option: "Orange"
+    options:
+      - "Red"
+      - "Orange"
+      - "Yellow"
+      - "Green"
+      - "Cyan"
+      - "Blue"
+      - "Purple"
+      - "Pink"
+      - "White"
+    on_value:
+      - lambda: |-
+          std::string color = id(led_color_select).current_option();
+          if (color == "Red") id(led_effect_color) = esphome::Color(255, 0, 0);
+          else if (color == "Orange") id(led_effect_color) = esphome::Color(255, 50, 0);
+          else if (color == "Yellow") id(led_effect_color) = esphome::Color(255, 255, 0);
+          else if (color == "Green") id(led_effect_color) = esphome::Color(0, 255, 0);
+          else if (color == "Cyan") id(led_effect_color) = esphome::Color(0, 255, 255);
+          else if (color == "Blue") id(led_effect_color) = esphome::Color(0, 0, 255);
+          else if (color == "Purple") id(led_effect_color) = esphome::Color(128, 0, 255);
+          else if (color == "Pink") id(led_effect_color) = esphome::Color(255, 0, 128);
+          else if (color == "White") id(led_effect_color) = esphome::Color(255, 255, 255);
+
+# Binary Sensors
+binary_sensor:
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+
+# Text Sensors
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "Connected SSID"
+      entity_category: diagnostic
+
+  # Display current time as text
+  - platform: template
+    name: "Displayed Time"
+    icon: "mdi:clock-digital"
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      auto time = id(esp_time).now();
+      if (!time.is_valid()) return std::string("--:--");
+
+      int hour = time.hour;
+      if (id(hour_format_12h).state) {
+        if (hour > 12) hour -= 12;
+        if (hour == 0) hour = 12;
+      }
+
+      char buffer[9];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hour, time.minute);
+      return std::string(buffer);
+
+# Sensors
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+# # Automation: Run anti-poison every hour
+# interval:
+#   - interval: 1h
+#     then:
+#       - if:
+#           condition:
+#             switch.is_on: anti_poison_enable
+#           then:
+#             - logger.log: "Running hourly anti-poison routine"
+#             - button.press: start_anti_poison

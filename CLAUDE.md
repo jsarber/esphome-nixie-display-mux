@@ -2,646 +2,63 @@
 
 ## Overview
 
-The NixieDisplay component handles multiplexed nixie tube displays with anti-poison (anti-fatigue) routines. It supports multiple anode configurations and provides robust state management for multiplexing operations.
+The NixieDisplay component handles multiplexed nixie tube displays with anti-poison (anti-fatigue) routines. It supports multiple tube types and power board variants via YAML presets.
 
 ## File Structure
 
-This component uses a modular library structure. The core Nixie library files are located in the `lib/` subdirectory:
+All core library files live in the component root directory (not in a `lib/` subdirectory):
 
 ```
 components/nixie_display_mux/
 ├── __init__.py                    # ESPHome Python configuration schema
 ├── nixie_display_mux.h            # Main ESPHome component header
 ├── nixie_display_mux.cpp          # Main ESPHome component implementation
-├── CLAUDE.md                      # This documentation file
-└── lib/                           # Nixie library files
-    ├── NixieDefines.h             # Library constants and type definitions
-    ├── NixieDisplay.h             # Main display class header
-    ├── NixieDisplay.cpp           # Main display class implementation
-    ├── NixieShiftRegister.h       # Shift register helper class header
-    ├── NixieShiftRegister.cpp     # Shift register helper class implementation
-    ├── NixieTube.h                # Individual tube class header
-    ├── NixieTube.cpp              # Individual tube class implementation
-    └── Z573M_4.h                  # Tube type definitions (IN12A/6 digit)
+├── NixieDefines.h                 # Library constants, pin maps, tube type selection
+├── NixieDisplay.h                 # Main display class header
+├── NixieDisplay.cpp               # Main display class implementation
+├── NixieShiftRegister.h           # Shift register helper class header
+├── NixieShiftRegister.cpp         # Shift register helper class implementation
+├── NixieTube.h                    # Individual tube class header
+├── NixieTube.cpp                  # Individual tube class implementation
+├── IN12A_6.h                      # IN12A tube type definitions (6 digits)
+├── Z5660M_4.h                     # Z5660M tube type definitions (4 digits)
+└── Z573M_4.h                      # Z573M tube type definitions (4 digits)
 ```
 
-All ESPHome source files (`nixie_display_mux.*`) include the library files from the `lib/` directory.
+## Tube Type Presets
 
-## Core Classes
+Defined in `__init__.py` `TUBE_PRESETS`:
 
-### NixieShiftRegister
+| Tube Type | Tubes | Blank Delay | On Delay | Neon Enabled |
+|-----------|-------|-------------|----------|--------------|
+| `in12a`   | 6     | 500µs       | 3500µs   | Yes          |
+| `z5660m`  | 4     | 500µs       | 3000µs   | Yes          |
+| `z573m`   | 4     | 1000µs      | 1000µs   | No           |
 
-## Core Classes
+Each tube type header provides `PIN_MAP`, `NIXIE_BLANK_DELAY`, `NIXIE_ON_DELAY`, `LED_COUNT`, and `NIXIE_TUBES` defines.
 
-### NixieShiftRegister
+## Power Board Presets
 
-Manages output to multiple cascaded shift registers used for controlling cathode pins on nixie tubes. Uses a fixed-size stack-based array (`bool data[32]`) to avoid heap fragmentation on embedded systems.
+Defined in `__init__.py` `POWER_BOARD_PRESETS`:
 
-#### Class Members
-| Member | Type | Description |
-|--------|------|-------------|
-| `shiftRegisterCount` | `uint8_t` | Number of cascaded shift registers (max 4) |
-| `dataPin` | `uint8_t` | Pin connected to shift register data output |
-| `clockPin` | `uint8_t` | Pin connected to shift register clock |
-| `latchPin` | `uint8_t` | Pin connected to shift register latch/strobe |
-| `data` | `bool[32]` | Fixed-size array storing bit data (max 4 registers × 8 bits) |
+| Board | SR Data | SR Clock | SR Latch | Blank | Anode 1 | Anode 2 | Anode 3 | SR Offset |
+|-------|---------|----------|----------|-------|---------|---------|---------|-----------|
+| `v30` | 12      | 13       | 14       | 21    | 15      | 16      | 17      | 15        |
+| `v31` | 27      | 26       | 22       | 21    | 5       | 16      | 17      | 16        |
+| `v32` | 27      | 26       | 4        | 2     | 5       | 16      | 17      | 16        |
 
-#### Constructors
-```cpp
-NixieShiftRegister(uint8_t shiftRegisterCount, uint8_t dataPin, uint8_t clockPin, uint8_t latchPin);
-NixieShiftRegister(uint8_t shiftRegisterCount, uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin);
-```
+SR_OFFSET is selected via compile-time `POWER_BOARD_V30/V31/V32` defines in `NixieDefines.h`:
+- v30: SR_OFFSET 15
+- v31, v32: SR_OFFSET 16
 
-Both constructors initialize pin modes to OUTPUT and zero-initialize the `data` array to prevent garbage values.
-
-#### Public Methods
-
-**set()**
-```cpp
-void set(uint8_t pin, byte dataIn);
-```
-Sets the data bit at the specified position.
-- `pin`: Bit position index (0-31)
-- `dataIn`: Byte value (0-255) to store at that position
-
-**update()**
-```cpp
-void update();
-```
-Transfers all stored data to the physical shift registers via SPI-like serial output.
-1. Drives latch pin LOW
-2. Sends data in 8-bit chunks using `shiftOut()` with MSBFIRST ordering
-3. Sends `shiftRegisterCount` bytes total
-4. Drives latch pin HIGH to capture data
-
----
-
-### NixieTube
-
-Represents a single nixie tube with its display index, digit value, and lit state. Used by `NixieDisplay` to manage up to 6 tubes.
-
-#### Class Members
-| Member | Type | Description |
-|--------|------|-------------|
-| `nixieIDX` | `uint8_t` | Tube display index (1-6) |
-| `nixieValue` | `uint8_t` | Current digit value to display (0-9) |
-| `nixieLit` | `bool` | Whether the tube is currently lit/active |
-
-#### Constructors
-```cpp
-NixieTube();  // Default constructor - all values zero/false
-NixieTube(uint8_t t_nixieIDX, uint8_t t_nixieValue, bool t_nixieLit);
-```
-
-#### Public Methods
-
-**get_idx()**
-```cpp
-uint8_t get_idx();
-```
-Returns the tube's display index (1-6).
-
-**get_value()**
-```cpp
-uint8_t get_value();
-```
-Returns the current digit value displayed on this tube (0-9).
-
-**set_value()**
-```cpp
-void set_value(uint8_t t_nixieValue);
-```
-Sets the digit value to display on this tube.
-
-**nixie_lit()**
-```cpp
-bool nixie_lit();
-```
-Returns whether the tube is currently lit/active.
-
-**toggle_nixie_lit()**
-```cpp
-void toggle_nixie_lit();
-```
-Toggles the lit state between true and false.
-
----
-
-## NixieDisplay Class
-
-## NixieDisplay Class
-
-### Constructor Functions
-
-All constructors accept the number of tubes and anode pin assignments. The `NixieShiftRegister*` parameter is passed but NOT owned by this class (managed by NixieDisplayMux).
-
-#### 2-Anode Configuration (Multiplexed)
-```cpp
-// 2-anode with shift register (optional) - tubes 1&3 share anode 1, tubes 2&4 share anode 2
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2);
-
-// 2-anode with shift register for cathode control
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, NixieShiftRegister* t_sr);
-```
-
-#### 3-Anode Configuration (Up to 6 tubes)
-```cpp
-// 3-anode configuration - each tube has its own anode
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3);
-
-// 3-anode with shift register blank pin
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, uint8_t t_sr_blank);
-
-// 3-anode with shift register (pointer not owned)
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, NixieShiftRegister* t_sr);
-
-// Full 3-anode configuration
-NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, uint8_t t_sr_blank, NixieShiftRegister* t_sr);
-```
-
-### Public API Functions
-
-#### set()
-```cpp
-void set(uint8_t t_tube, uint8_t t_digit);
-```
-Sets the digit value displayed on a specific tube.
-- `t_tube`: 1-indexed tube number (1-6)
-- `t_digit`: Value to display (0-9)
-- **Important**: When anti-poison is enabled, this function is bypassed to prevent overwriting anti-poison digits
-
-#### get()
-```cpp
-uint8_t get(uint8_t tube);
-```
-Gets the current digit value from a specific tube.
-- `tube`: 1-indexed tube number (1-6)
-- Returns: Current digit value, or 0 if invalid index
-
-#### update()
-```cpp
-void update();
-```
-Main update loop that controls nixie tube multiplexing at 50Hz (20ms period).
-- Uses instance timer instead of static to avoid race conditions with FreeRTOS tasks
-- Only updates when 1000us have passed since last update
-- State machine cycles through OFF → ON → BLANK states
-
-#### on()
-```cpp
-void on();
-```
-Turns on the nixie display.
-- Sets state to BLANK (2) and triggers initial update
-- Enables shift register output (sr_blank HIGH) for display updates
-
-#### off()
-```cpp
-void off();
-```
-Turns off the nixie display.
-- Sets state to OFF (0) and triggers update to blank all tubes
-- Disables shift register output (sr_blank LOW)
-
-### Anti-Poison Functions
-
-The anti-poison routine prevents nixie tube degradation by cycling through all digit positions (0-9) for each tube over approximately 30 seconds.
-
-#### startAntiPoison()
-```cpp
-void startAntiPoison(bool randomize, bool soft_start);
-```
-Starts the anti-poison routine.
-- `randomize`: Whether to randomize the digit sequence (currently uses sequential order 0-9)
-- `soft_start`: Whether to gradually transition tubes to anti-poison mode
-- After initialization, the routine cycles through digits and automatically stops when displayed digit matches the anti-poison digit (within tolerance)
-
-#### antiPoison()
-```cpp
-void antiPoison();
-```
-Main anti-poison routine - called periodically by update() every 100ms.
-- **Soft Start Phase**: Transitions tubes one by one to ANTI_POISON mode
-- **Cycling Phase**: All tubes cycle through digits 0-9
-- **Exit Check**: For each tube in ANTI_POISON mode, checks if the anti-poison digit matches the time digit (within AP_MATCH_TOLERANCE)
-- **Auto-Stop**: When all tubes return to TIME mode, disables the routine automatically
-
-#### getAntiPoisonDigit()
-```cpp
-uint8_t getAntiPoisonDigit(uint8_t tube_index);
-```
-Gets the digit that should be displayed according to anti-poison state.
-- `tube_index`: 0-indexed tube number (0 to numTubes_-1)
-- Returns: Anti-poison digit if tube is in ANTI_POISON mode, otherwise actual time digit
-- Returns 0 if tube_index is out of range
-
-#### setAntiPoisonEnabled()
-```cpp
-void setAntiPoisonEnabled(bool enabled);
-```
-Enables or disables the anti-poison routine.
-
-#### isAntiPoisonActive()
-```cpp
-bool isAntiPoisonActive();
-```
-Checks if the anti-poison routine is currently active.
-
-### Private Helper Functions
-
-#### toggleAnode()
-```cpp
-void toggleAnode(uint8_t tmux);
-```
-Toggles anode pins based on mux selection for 2-anode multiplexing:
-- `tmux = 0`: All anodes OFF (blank period), sr_blank LOW
-- `tmux = 1`: Anode 1 active (controls tubes 1 and 3 in 2-anode config)
-- `tmux = 2`: Anode 2 active (controls tubes 2 and 4 in 2-anode config)
-- `tmux = 3`: Anode 3 active (for 3-anode configurations)
-
-#### toggleCathode()
-```cpp
-void toggleCathode(uint8_t tube_index);
-```
-Sets cathode for a specific tube via shift register.
-- Iterates through all shift register bits
-- Sets the cathode pin for the specified tube to HIGH
-- Clears all other cathode pins to LOW
-
-#### updateNixies()
-```cpp
-uint16_t updateNixies();
-```
-Updates the nixie multiplexing state machine. Returns delay in microseconds.
-- State 0 (OFF): Blank period, all anodes off, sr_blank LOW, returns NIXIE_BLANK_DELAY
-- State 1 (ON): Display current tube with anode active, sr_blank HIGH, returns NIXIE_ON_DELAY
-- State 2 (BLANK): Prepare next tube, update shift register, sr_blank LOW, returns NIXIE_BLANK_DELAY
-- The t_mux_ variable tracks which tube is being displayed and alternates between anodes
-
-## Anti-Poison Routine Details
-
-### Digit Cycling
-The routine cycles through digits 0-9 on each tube to prevent "burn-in":
-1. **Underlying Time**: Actual time digits stored in `tubeArray` (e.g., "12:34")
-2. **Anti-Poison Digits**: Each tube has its own sequence that cycles through 0-9
-3. **State Selection**: Tube shows either time digit or anti-poison digit based on state
-
-### Member Variables
-```cpp
-bool anti_poison_enabled_{false};      // Main enable flag
-bool ap_random_{true};                 // Randomize digit sequences (sequential mode used)
-bool ap_soft_start_{true};             // Gradual tube transition
-uint8_t ap_array[6][10];               // Anti-poison digit sequence per tube
-uint8_t ap_state_[6];                  // Per-tube state: 0=TIME, 1=ANTI_POISON
-uint8_t ap_current_digit_{0};          // Shared digit position counter (0-9)
-uint8_t ap_loop_{0};                   // Soft start progress counter
-uint8_t ap_max_loops_{AP_MAX_LOOPS_DEFAULT};  // Max loops before exit check
-unsigned long ap_last_check_{0};       // Timing reference for state checks
-```
-
-### State Machine
-Each tube has two states:
-| State | Value | Behavior |
-|-------|-------|----------|
-| TIME | 0 | Shows actual time digit from `tubeArray` |
-| ANTI_POISON | 1 | Shows anti-poison digit from `ap_array[tube][ap_current_digit_]` |
-
-### Operation Flow
-```
-User presses "Start Anti-Poison" button
-         ↓
-startAntiPoison() initializes:
-   - All tubes set to TIME mode (state = 0)
-   - ap_current_digit_ = 0
-   - ap_loop_ = 0
-         ↓
-antiPoison() called every 100ms:
-   Step 1: Increment ap_current_digit_ (cycles 0→1→2→...→9→0)
-   Step 2: During soft start, transition tubes one-by-one to ANTI_POISON mode
-   Step 3: After all tubes in ANTI_POISON mode:
-           For each tube: Check if ap_digit matches time_digit (within tolerance)
-           If match found: Set tube back to TIME mode
-   Step 4: When all tubes return to TIME mode: Disable anti-poison routine
-```
-
-### Soft Start and Soft Stop
-**Soft Start**: Tubes transition one at a time (Tube 0 → Tube 1 → ...) preventing sudden visual changes.
-
-**Match Tolerance**: Anti-poison digit matches time digit when `|ap_digit - time_digit| ≤ AP_MATCH_TOLERANCE` (default = 3).
-
-Example: If time digit is "1", tube exits ANTI_POISON mode when showing digits 0-4.
-
-### Timing Configuration
-```cpp
-#define AP_TIME_CHECK_DELAY 100  // ms - Time between state checks
-#define AP_MAX_LOOPS_DEFAULT 30  // Number of loops before exit check
-```
-- Digit cycles through 0-9 every 100ms (10 digits per second)
-- Each loop lasts ~1 second
-- 30 loops = 30 seconds total runtime
-
-## Multiplexing Details
-
-### 2-Anode Configuration
-- Anode 1 (pin 5): Controls tubes 1 and 3
-- Anode 2 (pin 16): Controls tubes 2 and 4
-- Each tube has its own cathode pin (0-9 for digits 0-9)
-
-### State Machine (50Hz = 20ms period)
-| State | Name | Duration | sr_blank | Description |
-|-------|------|----------|----------|-------------|
-| 0 | OFF | NIXIE_BLANK_DELAY | LOW | Blank period, all tubes off |
-| 1 | ON | NIXIE_ON_DELAY | HIGH | Display current tube with anode active |
-| 2 | BLANK | NIXIE_BLANK_DELAY | LOW | Prepare cathode for next tube, update shift register |
-
-### Protection Against Conflicts
-The `set()` method is protected when anti-poison is enabled to prevent the YAML interval from overwriting anti-poison digits.
-
-## Constants
-```cpp
-#define NIXIE_BLANK_DELAY     // Delay during blank period (microseconds)
-#define NIXIE_ON_DELAY        // Delay during ON period (microseconds)
-#define SHIFT_REGISTER_COUNT  4  // Number of shift registers
-#define SR_OFFSET             // Offset for shift register pins
-#define AP_MAX_LOOPS_DEFAULT  30
-#define AP_TIME_CHECK_DELAY   100  // ms
-#define AP_MATCH_TOLERANCE    3    // Max difference for time match
-```
-
-## Example Usage
-
-### Basic NixieDisplay Usage
-```cpp
-// Create 4-tube display with 2-anode configuration
-NixieDisplay display(4, NIXIE_ANODE_1, NIXIE_ANODE_2, sr);
-
-// Set a digit on tube 1 (shows value 7)
-display.set(1, 7);
-
-// Turn on the display
-display.on();
-
-// Update display (called in loop)
-display.update();
-
-// Start anti-poison routine
-display.startAntiPoison(true, true);
-
-// Check if anti-poison is active
-if (display.isAntiPoisonActive()) {
-    // Get what digit should be shown (considering anti-poison)
-    uint8_t digit = display.getAntiPoisonDigit(0);
-}
-```
-
-### NixieShiftRegister Usage
-```cpp
-// Create shift register for cathode control (4 registers for 32 bits)
-NixieShiftRegister sr(4, SHIFT_REGISTER_DATA, SHIFT_REGISTER_CLK, SHIFT_REGISTER_LATCH, SHIFT_REGISTER_BLANK);
-
-// Set individual cathode bits
-sr.set(0, 1);  // Set bit 0 (tube 1, digit 0 cathode)
-sr.set(1, 1);  // Set bit 1 (tube 1, digit 1 cathode)
-// ... set more bits as needed
-
-// Transfer data to shift registers
-sr.update();
-```
-
-### NixieTube Usage
-```cpp
-// Create a tube object
-NixieTube tube(1, 7, true);  // Tube 1, showing digit 7, lit
-
-// Access properties
-uint8_t idx = tube.get_idx();        // Returns 1
-uint8_t value = tube.get_value();    // Returns 7
-bool lit = tube.nixie_lit();         // Returns true
-
-// Modify properties
-tube.set_value(3);  // Now shows digit 3
-tube.toggle_nixie_lit();  // Turns off (now false)
-```
-
-### Complete Initialization Example
-```cpp
-// Create shift register for cathode control
-NixieShiftRegister* sr = new NixieShiftRegister(4, SHIFT_REGISTER_DATA, SHIFT_REGISTER_CLK, SHIFT_REGISTER_LATCH, SHIFT_REGISTER_BLANK);
-
-// Create display with shift register (pointer not owned by display)
-NixieDisplay display(4, NIXIE_ANODE_1, NIXIE_ANODE_2, sr);
-
-// Set up display values
-display.set(1, 1);  // Hours tens
-display.set(2, 2);  // Hours units
-display.set(3, 3);  // Minutes tens
-display.set(4, 4);  // Minutes units
-
-// Initialize and run
-display.on();
-display.update();
-
-// Start anti-poison routine (optional)
-display.startAntiPoison(true, true);
-```
-
----
-
-## NixieDisplayMux Class
-
-### Overview
-
-`NixieDisplayMux` is the main ESPHome component that integrates with ESPHome's framework to control a multiplexed nixie tube display. It uses FreeRTOS tasks for high-frequency multiplexing (500Hz) and manages both `NixieShiftRegister` and `NixieDisplay` instances.
-
-### Key Features
-
-- **FreeRTOS Task**: Runs multiplexing at 500Hz (2ms period) in a dedicated task to ensure consistent timing
-- **Stack-Based Memory**: Uses fixed-size arrays to avoid heap fragmentation on embedded systems
-- **Anti-Poison Support**: Provides anti-fatigue routine for nixie tubes
-- **Multiple Anode Configurations**: Supports 2-anode (up to 4 tubes) and 3-anode (up to 6 tubes) configurations
-
-### Constructor and Destructor
-
-```cpp
-NixieDisplayMux();                    // Default constructor
-~NixieDisplayMux();                   // Destructor - cleans up display and shift register
-```
-
-### Component Lifecycle Methods
-
-#### setup()
-```cpp
-void setup() override;
-```
-Initializes the component:
-1. Creates `NixieShiftRegister` instance (4 registers)
-2. Creates `NixieDisplay` instance with 3-anode configuration
-3. Initializes all tubes to display 0
-4. Starts FreeRTOS multiplexing task
-
-#### loop()
-```cpp
-void loop() override;
-```
-Minimal implementation for task cleanup when not running. Multiplexing is handled by the FreeRTOS task.
-
-#### multiplexing_loop()
-```cpp
-void multiplexing_loop();
-```
-FreeRTOS task callback called at 500Hz (2ms period):
-1. Runs anti-poison state machine on display
-2. Runs multiplexing update on display
-
-### Configuration Methods
-
-These setter methods are called from Python configuration:
-
-```cpp
-void set_num_tubes(uint8_t num);          // Set number of tubes (2-6)
-void set_sr_data_pin(uint8_t pin);        // Shift register data pin
-void set_sr_clock_pin(uint8_t pin);       // Shift register clock pin
-void set_sr_latch_pin(uint8_t pin);       // Shift register latch pin
-void set_blank_pin(uint8_t pin);          // Shift register blank pin
-void set_anode_1_pin(uint8_t pin);        // Anode 1 (tubes 1&3 in 2-anode config)
-void set_anode_2_pin(uint8_t pin);        // Anode 2 (tubes 2&4 in 2-anode config)
-void set_anode_3_pin(uint8_t pin);        // Anode 3 (for 3-anode configurations)
-```
-
-### Display Control Methods
-
-#### test()
-```cpp
-void test();
-```
-Test mode for debugging display hardware. (Implementation TBD)
-
-#### set_digit()
-```cpp
-void set_digit(uint8_t tube_index, uint8_t digit);
-```
-Sets the digit value for a specific tube.
-- `tube_index`: 0-indexed (0 to num_tubes_-1)
-- Internally converts to 1-based indexing for NixieDisplay
-
-#### set_digits()
-```cpp
-void set_digits(const uint8_t *digits, uint8_t count);
-```
-Sets digits for multiple tubes from an array.
-- `digits`: Pointer to array of digit values
-- `count`: Number of elements to process
-
-#### set_all_tubes()
-```cpp
-void set_all_tubes(uint8_t digit);
-```
-Sets the same digit for all tubes simultaneously.
-
-#### display_on()
-```cpp
-void display_on();
-```
-Turns on the display:
-1. Calls `display_->on()` to initialize state
-2. Starts the FreeRTOS multiplexing task
-
-#### display_off()
-```cpp
-void display_off();
-```
-Turns off the display:
-1. Calls `display_->off()` to blank all tubes
-2. Stops the FreeRTOS multiplexing task
-
-### Anti-Poison Methods
-
-#### start_anti_poison()
-```cpp
-void start_anti_poison(bool randomize, bool soft_start);
-```
-Starts the anti-poison routine on the display.
-- `randomize`: Whether to randomize digit sequence
-- `soft_start`: Whether to gradually transition tubes
-
-#### is_anti_poison_active()
-```cpp
-bool is_anti_poison_active();
-```
-Checks if the anti-poison routine is currently active.
-
-### Task Control Methods
-
-#### start_multiplexing_task()
-```cpp
-BaseType_t start_multiplexing_task();
-```
-Creates the FreeRTOS multiplexing task:
-- Task name: "nixie_mux_task"
-- Stack size: 2KB (2048 bytes)
-- Priority: tskIDLE_PRIORITY + 2
-- Returns: pdPASS on success, pdFAIL on failure
-
-#### stop_multiplexing_task()
-```cpp
-void stop_multiplexing_task();
-```
-Stops the FreeRTOS multiplexing task:
-1. Sets `start_multiplexing_task_` flag to false
-2. Deletes the task using `vTaskDelete()`
-
-#### get_multiplexing_task_running()
-```cpp
-bool get_multiplexing_task_running() const;
-```
-Returns true if the multiplexing task is currently running.
-
-### FreeRTOS Task Details
-
-The `multiplexing_task` runs independently in a dedicated FreeRTOS task:
-
-```cpp
-void multiplexing_task(void *pvParameters) {
-  NixieDisplayMux *component = static_cast<NixieDisplayMux *>(pvParameters);
-  while (true) {
-    component->multiplexing_loop();
-    vTaskDelay(pdMS_TO_TICKS(2));  // 2ms period = ~500Hz
-  }
-}
-```
-
-**Why a FreeRTOS Task?**
-- Ensures consistent 500Hz multiplexing rate independent of main loop
-- Prevents timing drift that could cause display artifacts
-- Allows display updates without blocking main ESPHome tasks
-
-### Internal Data Members
-
-```cpp
-uint8_t num_tubes_{4};                  // Number of tubes (configurable 2-6)
-uint8_t sr_data_pin_{27};               // Shift register data pin
-uint8_t sr_clock_pin_{26};              // Shift register clock pin
-uint8_t sr_latch_pin_{4};               // Shift register latch pin
-uint8_t blank_pin_{2};                  // Shift register blank pin
-uint8_t anode_1_pin_{5};                // Anode 1 pin
-uint8_t anode_2_pin_{16};               // Anode 2 pin
-uint8_t anode_3_pin_{17};               // Anode 3 pin
-
-NixieShiftRegister *sr_{nullptr};       // Shift register instance (owned)
-NixieDisplay *display_{nullptr};        // Display instance (owned)
-
-bool start_multiplexing_task_{false};   // Task running flag
-```
-
-### ESPHome Configuration Example
+## YAML Configuration
 
 ```yaml
-esphome:
-  name: nixie_clock
-  platform: ESP32
-  board: esp32dev
-
 nixie_display_mux:
+  id: nixie_clock
+  tube_type: z573m          # in12a, z5660m, z573m
+  power_board: v32          # v30, v31, v32
+  # Optional overrides (defaults come from presets)
   num_tubes: 4
   sr_data_pin: 27
   sr_clock_pin: 26
@@ -650,16 +67,311 @@ nixie_display_mux:
   anode_1_pin: 5
   anode_2_pin: 16
   anode_3_pin: 17
-
-sensor:
-  - platform: time
-    name: "Current Time"
 ```
 
-### Generated Code Flow
+## Core Classes
 
-1. Python config validation in `__init__.py` validates pin numbers and tube count
-2. `to_code()` generates C++ calls to setter methods
-3. During ESPHome setup, `setup()` creates hardware instances and starts FreeRTOS task
-4. Main loop handles task cleanup if needed
-5. FreeRTOS task runs at 500Hz, calling `multiplexing_loop()` for display updates
+### NixieShiftRegister
+
+Manages output to multiple cascaded shift registers for cathode control. Uses a fixed-size array (`bool data[32]`) to avoid heap fragmentation.
+
+```cpp
+// Constructors
+NixieShiftRegister(uint8_t shiftRegisterCount, uint8_t dataPin, uint8_t clockPin, uint8_t latchPin);
+NixieShiftRegister(uint8_t shiftRegisterCount, uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin);
+
+// Methods
+void set(uint8_t pin, byte dataIn);  // Set bit at position (0-31)
+void update();                        // Transfer data to shift registers
+```
+
+### NixieTube
+
+Represents a single nixie tube with display index, digit value, and lit state.
+
+```cpp
+NixieTube();  // Default constructor
+NixieTube(uint8_t t_nixieIDX, uint8_t t_nixieValue, bool t_nixieLit);
+
+// Methods
+uint8_t get_idx();              // Returns tube display index (1-6)
+uint8_t get_value();            // Returns current digit value (0-9)
+void set_value(uint8_t t_nixieValue);
+bool nixie_lit();               // Returns lit state
+void toggle_nixie_lit();        // Toggles lit state
+bool fade_skip_{false};         // Skip ON state during crossfade
+```
+
+### NixieDisplay
+
+Main display class with multiplexing, anti-poison, and tube management.
+
+```cpp
+// 2-anode configurations
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2);
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, NixieShiftRegister* t_sr);
+
+// 3-anode configurations (up to 6 tubes)
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3);
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, uint8_t t_sr_blank);
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, NixieShiftRegister* t_sr);
+NixieDisplay(uint8_t t_numTubes, uint8_t t_anode_1, uint8_t t_anode_2, uint8_t t_anode_3, uint8_t t_sr_blank, NixieShiftRegister* t_sr);
+
+// Public API
+void set(uint8_t t_tube, uint8_t t_digit);          // Set tube digit (1-indexed)
+uint8_t get(uint8_t tube);                           // Get tube digit (1-indexed)
+void update();                                        // Main update loop
+void on();                                            // Turn on display
+void off();                                           // Turn off display
+
+// Anti-poison
+void startAntiPoison(bool randomize, bool soft_start);
+void antiPoison();                                    // Called every 100ms
+uint8_t getAntiPoisonDigit(uint8_t tube_index);       // Get anti-poison digit (0-indexed)
+bool isAntiPoisonActive();
+
+// Fade state
+uint8_t fade_cycles_{0};         // Cycles per fade phase
+int8_t fade_remaining_[6];       // Signed per-tube counter
+uint8_t old_cathode_[6];         // Cathode pin for digit being faded out
+void triggerFadeOut(uint8_t tube_idx, uint8_t old_cathode_pin);
+void setFadeCycles(uint8_t cycles);
+```
+
+#### toggleCathode()
+
+Sets cathode for tubes on a given anode. On the current anode, uses the new digit (or old digit if fading out). Explicitly restores old cathodes for tubes on the **other** anode that are still fading out — they were cleared when ALL cathodes were reset.
+
+```cpp
+void toggleCathode(uint8_t tmux);
+// tmux=1 -> anode 1 active -> tubes 1&3
+// tmux=2 -> anode 2 active -> tubes 2&4
+```
+
+#### updateNixies()
+
+Multiplexing state machine. Returns delay in microseconds:
+- State 0 (OFF): All anodes off, sr_blank LOW
+- State 1 (ON): Display current tube. During fade-out, anode stays ON (shows old cathode at reduced duty). During fade-in, skips anode (keeps new tube dark).
+- State 2 (BLANK): Update cathode via `toggleCathode()`, sr_blank LOW
+
+Fade state is decremented at the start of each call.
+
+### NixieDisplayMux
+
+ESPHome component wrapper. Manages component lifecycle and exposes YAML configurables.
+
+```cpp
+void set_num_tubes(uint8_t num);
+void set_sr_data_pin(uint8_t pin);
+void set_sr_clock_pin(uint8_t pin);
+void set_sr_latch_pin(uint8_t pin);
+void set_blank_pin(uint8_t pin);
+void set_anode_1_pin(uint8_t pin);
+void set_anode_2_pin(uint8_t pin);
+void set_anode_3_pin(uint8_t pin);
+void set_crossfade_enabled(bool enabled);
+void set_crossfade_duration_ms(uint16_t ms);
+
+// Display control
+void set_digit(uint8_t tube_index, uint8_t digit);       // 0-indexed
+void set_digits(const uint8_t *digits, uint8_t count);
+void set_all_tubes(uint8_t digit);
+void display_on();
+void display_off();
+
+// Anti-poison
+void start_anti_poison(bool randomize, bool soft_start);
+bool is_anti_poison_active();
+
+// Neon indicators
+void neons_on(bool enable);
+
+// Task control
+BaseType_t start_multiplexing_task();
+void stop_multiplexing_task();
+bool get_multiplexing_task_running() const;
+```
+
+#### set_digit()
+
+Converts 0-indexed tube to 1-indexed for NixieDisplay. Triggers fade-out if crossfade is enabled and anti-poison is not active.
+
+#### multiplexing_loop()
+
+FreeRTOS task callback at 500Hz (2ms period):
+1. Runs anti-poison state machine on display
+2. Runs multiplexing update on display
+
+## Anti-Poison Routine
+
+Cycles through digits 0-9 on each tube to prevent burn-in. Each tube has its own sequence, runs for 30 seconds, then auto-stops when all tubes return to TIME mode.
+
+### Member Variables
+```cpp
+bool anti_poison_enabled_{false};      // Main enable flag
+bool ap_random_{true};                 // Randomize digit sequences
+bool ap_soft_start_{true};             // Gradual tube transition
+uint8_t ap_array[6][10];               // Anti-poison digit sequence per tube
+uint8_t ap_state_[6];                  // Per-tube state: 0=TIME, 1=ANTI_POISON
+uint8_t ap_current_digit_{0};          // Shared digit position counter (0-9)
+unsigned long ap_last_check_{0};       // Timing reference
+```
+
+### State Machine
+Each tube has two states:
+| State | Value | Behavior |
+|-------|-------|----------|
+| TIME | 0 | Shows actual time digit |
+| ANTI_POISON | 1 | Shows anti-poison digit |
+
+### Operation Flow
+1. All tubes start in TIME mode
+2. Soft start transitions tubes one-by-one to ANTI_POISON
+3. Digit counter cycles 0-9 every 100ms
+4. Each tube in ANTI_POISON mode for 30 seconds, then returns to TIME
+5. When all tubes return to TIME: routine stops automatically
+
+## Multiplexing Details
+
+### 2-Anode Configuration
+- Anode 1 (default pin 5): Controls tubes 1 and 3
+- Anode 2 (default pin 16): Controls tubes 2 and 4
+- Cathodes 3 and 4 use upper shift register branch (+ SR_OFFSET)
+
+### State Machine (500Hz = 2ms period)
+| State | Name | Duration | sr_blank | Description |
+|-------|------|----------|----------|-------------|
+| 0 | OFF | NIXIE_BLANK_DELAY | LOW | Blank period, all tubes off |
+| 1 | ON | NIXIE_ON_DELAY | HIGH | Display current tube with anode active |
+| 2 | BLANK | NIXIE_BLANK_DELAY | LOW | Prepare cathode for next tube |
+
+## Time Sources
+
+### SNTP (Recommended)
+ESP32 gets time directly from NTP servers:
+```yaml
+time:
+  - platform: sntp
+    id: esp_time
+    timezone: America/Los_Angeles
+```
+
+### Home Assistant Time
+Time synced from HA via API:
+```yaml
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: America/Los_Angeles
+```
+
+## YAML Timer Feature
+
+Countdown timer using YAML-only globals and intervals:
+```yaml
+globals:
+  - id: timer_remaining
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: timer_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+number:
+  - platform: template
+    id: timer_set_minutes
+    name: "Countdown Timer"
+    mode: slider
+    min_value: 1
+    max_value: 1440
+    set_action:
+      - lambda: |-
+          id(timer_remaining) = static_cast<uint32_t>(x) * 60;
+          id(timer_active) = true;
+
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          // Display countdown when active, otherwise show clock time
+          if (id(timer_active) && id(timer_remaining) > 0) {
+            // Show MM:SS or H:MM format on tubes
+          } else {
+            // Show HH:MM clock time
+          }
+
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(timer_active) && id(timer_remaining) > 0) {
+            id(timer_remaining)--;
+            if (id(timer_remaining) == 0) {
+              id(timer_active) = false;
+            }
+          }
+```
+
+## SNTP Auto-trigger Example
+
+Anti-poison every 15 minutes at :14:15, :29:15, :44:15, :59:15:
+```yaml
+time:
+  - platform: sntp
+    id: esp_time
+    timezone: America/Los_Angeles
+    on_time:
+      - seconds: 15
+        minutes: 14,29,44,59
+        then:
+          - button.press: start_anti_poison
+```
+
+## Example Configuration
+
+```yaml
+esphome:
+  name: nixie-clock
+  platform: ESP32
+  board: esp32dev
+
+time:
+  - platform: sntp
+    id: esp_time
+    timezone: America/Los_Angeles
+
+nixie_display_mux:
+  id: nixie_clock
+  tube_type: z573m
+  power_board: v32
+
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          auto time = id(esp_time).now();
+          if (!time.is_valid()) { id(nixie_clock)->set_all_tubes(0); return; }
+          uint8_t digits[4];
+          digits[0] = time.hour / 10;
+          digits[1] = time.hour % 10;
+          digits[2] = time.minute / 10;
+          digits[3] = time.minute % 10;
+          id(nixie_clock)->set_digits(digits, 4);
+```
+
+## Known Issues & Gotchas
+
+### SR_OFFSET
+Must match the power board version. Defined in `NixieDefines.h` via `POWER_BOARD_V30/V31/V32` preprocessor conditionals:
+- v30: 15
+- v31, v32: 16
+
+The old approach of `cg.add_define("SR_OFFSET", ...)` in `__init__.py` did not work because `NixieDefines.h` was already included before the generated define. Use power board version defines instead.
+
+### Cathode Persistence During Fade
+The `toggleCathode()` function clears ALL cathodes then sets the current anode's cathodes. Old cathodes for tubes on the **other** anode must be explicitly restored after clearing, otherwise fade-out tubes on the other anode go dark prematurely.
+
+### Timing Accuracy
+`NixieDisplay::update()` uses a static timer to track updates. It should not rely on return values from `updateNixies()` since those are instance-timer driven, not return-driven.
